@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fiber-asynq-app/database"
+	"fmt"
 	"log"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"github.com/jackc/pgx"
 )
 
 const TaskCreateUser = "task:create_user"
@@ -37,13 +39,30 @@ func ProcessCreateUserTask(ctx context.Context, task *asynq.Task) error {
 		return err
 	}
 
-	_, err := database.DB.Exec(ctx, "INSERT INTO users (id, name, email) VALUES ($1, $2, $3)", uuid.New(), payload.Name, payload.Email)
+	// Cek apakah database sudah diinisialisasi
+	if database.DB == nil {
+		return fmt.Errorf("database connection is not initialized")
+	}
+
+	// Cetak data sebelum insert
+	log.Printf("Processing user insert - Name: %s, Email: %s", payload.Name, payload.Email)
+
+	_, err := database.DB.Exec(ctx, `
+		INSERT INTO users (id, name, email) 
+		VALUES ($1, $2, $3) 
+		ON CONFLICT (email) DO NOTHING`,
+		uuid.New(), payload.Name, payload.Email)
+
 	if err != nil {
+		if pgErr, ok := err.(*pgx.PgError); ok && pgErr.Code == "23505" {
+			log.Println("Duplicate email, skipping:", payload.Email)
+			return nil // Tidak dianggap error
+		}
+
 		log.Println("Failed to insert user:", err)
 		return err
 	}
 
-	log.Println("User created:", payload.Email)
-
+	log.Println("User created successfully:", payload.Email)
 	return nil
 }
